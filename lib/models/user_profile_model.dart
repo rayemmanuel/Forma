@@ -1,7 +1,7 @@
 // lib/models/user_profile_model.dart
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart'; // New ClothingItem class to hold image data
 
-// New ClothingItem class to hold image data
 class ClothingItem {
   final String name;
   final String? imageUrl; // MongoDB image URL will go here
@@ -43,9 +43,12 @@ class UserProfileModel extends ChangeNotifier {
   // -------------------
 
   // Add item to selected outfit (replaces any existing item in that category)
-  void selectOutfitItem(String category, String itemName) {
+  Future<void> selectOutfitItem(String category, String itemName) async {
     _selectedOutfit[category] = itemName;
     notifyListeners();
+
+    // Save to MongoDB
+    await AuthService.updateProfile({'selectedOutfit': _selectedOutfit});
   }
 
   // Remove item from selected outfit
@@ -159,16 +162,36 @@ class UserProfileModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateBodyType(String? type) {
+  Future<void> updateBodyType(String? type) async {
     bodyType = type;
     _navigationIndex = 2;
-    print('[USER] updateBodyType -> $type');
     notifyListeners();
+
+    // Save to MongoDB
+    await AuthService.updateProfile({'bodyType': type});
   }
 
-  void updateSkinTone(String tone) {
+  Future<void> updateSkinTone(String tone) async {
     skinUndertone = tone;
     notifyListeners();
+
+    // Save to MongoDB
+    await AuthService.updateProfile({'skinUndertone': tone});
+  }
+
+  Future<void> loadUserData() async {
+    final result = await AuthService.getUserProfile();
+    if (result['success']) {
+      final user = result['user'];
+      username = user['name'];
+      gender = user['gender'];
+      bodyType = user['bodyType'];
+      skinUndertone = user['skinUndertone'];
+      if (user['selectedOutfit'] != null) {
+        _selectedOutfit = Map<String, String>.from(user['selectedOutfit']);
+      }
+      notifyListeners();
+    }
   }
 
   void setSkinUndertone(String tone) => updateSkinTone(tone);
