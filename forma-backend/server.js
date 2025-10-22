@@ -1,9 +1,11 @@
-require('dotenv').config();
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+import 'dotenv/config';
+import express from 'express';
+import mongoose from 'mongoose';
+import cors from 'cors';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import os from 'os';
+import recommendationRoutes from './routes/recommendationRoutes.js';
 
 const app = express();
 
@@ -13,6 +15,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key_change_t
 const PORT = process.env.PORT || 3000;
 
 // Middleware
+app.use('/api/recommendations', recommendationRoutes);
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use((req, res, next) => {
@@ -127,7 +130,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📱 Local: http://localhost:${PORT}`);
   
   // Get local IP
-  const os = require('os');
   const nets = os.networkInterfaces();
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
