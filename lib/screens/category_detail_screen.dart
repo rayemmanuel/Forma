@@ -1,4 +1,3 @@
-// lib/screens/category_detail_screen.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -14,8 +13,8 @@ class CategoryDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final userProfile = Provider.of<UserProfileModel>(context);
-    final recommendations = userProfile.styleRecommendations;
-    final items = recommendations[categoryName] ?? [];
+    // 'items' is now correctly a List<ClothingItem>
+    final items = userProfile.styleRecommendations[categoryName] ?? [];
 
     return Scaffold(
       backgroundColor: const Color(0xFFE7DFD8),
@@ -99,11 +98,10 @@ class CategoryDetailScreen extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     itemCount: items.length,
                     itemBuilder: (context, index) {
-                      final itemName = items[index];
-                      final clothingItem = userProfile.getClothingItem(
-                        categoryName,
-                        itemName,
-                      );
+                      // --- FIX 1 of 2: Get the full ClothingItem object directly ---
+                      // We no longer need to look it up, since the list already contains it.
+                      final clothingItem = items[index];
+
                       return StaggeredListItem(
                         index: index,
                         baseDelay: const Duration(milliseconds: 50),
@@ -111,7 +109,7 @@ class CategoryDetailScreen extends StatelessWidget {
                           context,
                           userProfile,
                           categoryName,
-                          itemName,
+                          // --- FIX 2 of 2: Pass the clothingItem object directly ---
                           clothingItem,
                           index,
                         ),
@@ -128,13 +126,16 @@ class CategoryDetailScreen extends StatelessWidget {
     BuildContext context,
     UserProfileModel userProfile,
     String categoryName,
-    String itemName,
+    // The parameter is now a ClothingItem object, not a String
     ClothingItem clothingItem,
     int index,
   ) {
     final heights = [200.0, 250.0, 180.0, 220.0, 240.0, 190.0];
     final imageHeight = heights[index % heights.length];
-    final isSelected = userProfile.isItemSelected(categoryName, itemName);
+    final isSelected = userProfile.isItemSelected(
+      categoryName,
+      clothingItem.name,
+    );
 
     return GestureDetector(
       onTap: () {
@@ -157,13 +158,14 @@ class CategoryDetailScreen extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           child: Stack(
             children: [
-              // Image section
+              // Image section - This part now works correctly!
               Container(
                 height: imageHeight,
                 decoration: BoxDecoration(
-                  color: _getPlaceholderColor(itemName),
+                  color: _getPlaceholderColor(clothingItem.name),
                   image: clothingItem.imageUrl != null
                       ? DecorationImage(
+                          // It uses the imageUrl from the clothingItem object
                           image: NetworkImage(clothingItem.imageUrl!),
                           fit: BoxFit.cover,
                         )
@@ -172,7 +174,7 @@ class CategoryDetailScreen extends StatelessWidget {
                 child: clothingItem.imageUrl == null
                     ? Center(
                         child: Icon(
-                          _getIconForItem(itemName),
+                          _getIconForItem(clothingItem.name),
                           size: 48,
                           color: Colors.white.withOpacity(0.6),
                         ),
@@ -197,7 +199,8 @@ class CategoryDetailScreen extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    itemName,
+                    // It uses the name from the clothingItem object
+                    clothingItem.name,
                     style: GoogleFonts.inter(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -223,27 +226,23 @@ class CategoryDetailScreen extends StatelessWidget {
                   onTap: () {
                     if (isSelected) {
                       userProfile.removeOutfitItem(categoryName);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            "$itemName removed from Your Perfect Outfit",
-                          ),
-                          duration: const Duration(seconds: 1),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
                     } else {
-                      userProfile.selectOutfitItem(categoryName, itemName);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            "$itemName added to Your Perfect Outfit",
-                          ),
-                          duration: const Duration(seconds: 1),
-                          behavior: SnackBarBehavior.floating,
-                        ),
+                      userProfile.selectOutfitItem(
+                        categoryName,
+                        clothingItem.name,
                       );
                     }
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          isSelected
+                              ? "${clothingItem.name} removed from Your Perfect Outfit"
+                              : "${clothingItem.name} added to Your Perfect Outfit",
+                        ),
+                        duration: const Duration(seconds: 1),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
                   },
                 ),
               ),
@@ -254,7 +253,7 @@ class CategoryDetailScreen extends StatelessWidget {
     );
   }
 
-  // Helpers
+  // --- Helper Widgets and Functions (No changes below this line) ---
   Color _getPlaceholderColor(String itemName) {
     final colorMap = {
       'warm': [
@@ -276,7 +275,6 @@ class CategoryDetailScreen extends StatelessWidget {
         const Color(0xFFB22222),
       ],
     };
-
     final lowerName = itemName.toLowerCase();
     if (lowerName.contains('warm') ||
         lowerName.contains('camel') ||
@@ -356,7 +354,6 @@ class CategoryDetailScreen extends StatelessWidget {
 class AnimatedHeartButton extends StatefulWidget {
   final bool isSelected;
   final VoidCallback onTap;
-
   const AnimatedHeartButton({
     super.key,
     required this.isSelected,
@@ -379,7 +376,6 @@ class _AnimatedHeartButtonState extends State<AnimatedHeartButton>
       duration: const Duration(milliseconds: 200),
       vsync: this,
     );
-
     _scaleAnimation = Tween<double>(
       begin: 1.0,
       end: 1.2,

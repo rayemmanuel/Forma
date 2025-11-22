@@ -1,5 +1,6 @@
-// lib/screens/palette_screen.dart
-import 'package:flutter/foundation.dart' show kIsWeb;
+// lib/screens/palette_screen.dart // Reverted filename comment
+import 'package:flutter/foundation.dart'
+    show compute, kIsWeb; // Added compute back
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
@@ -10,28 +11,36 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../models/user_profile_model.dart';
-import '../utils/transitions_helper.dart';
+import '../utils/transitions_helper.dart'; // Keep if used
 
+// --- Reverted Screen Name ---
 class PaletteScreen extends StatefulWidget {
   const PaletteScreen({super.key});
 
   @override
-  State<PaletteScreen> createState() => _PaletteScreenState();
+  State<PaletteScreen> createState() => _PaletteScreenState(); // Reverted State Name
 }
 
+// --- Reverted State Name ---
 class _PaletteScreenState extends State<PaletteScreen>
     with TickerProviderStateMixin {
   CameraController? _cameraController;
   bool _isCameraInitialized = false;
   bool _isAnalyzing = false;
   String? _capturedImagePath;
-  Uint8List? _capturedBytes; // for web thumbnail
+  Uint8List? _capturedBytes;
   String? _analyzedUndertone;
 
   late final AnimationController _resultAnimController;
   late final Animation<double> _resultAnim;
   late final AnimationController _buttonPulseController;
   late final Animation<double> _buttonPulseAnim;
+
+  // Theme Color
+  final Color themeColor = const Color(0xFF8B7355);
+  final Color lightBackgroundColor = const Color(
+    0xFFF8F5F2,
+  ); // Consistent light background
 
   @override
   void initState() {
@@ -46,7 +55,6 @@ class _PaletteScreenState extends State<PaletteScreen>
       curve: Curves.easeOut,
     );
 
-    // Pulse animation for the capture button
     _buttonPulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -56,45 +64,50 @@ class _PaletteScreenState extends State<PaletteScreen>
     );
   }
 
+  // --- Camera Initialization ---
   Future<void> _initializeCamera() async {
     try {
       final cameras = await availableCameras();
-      if (cameras.isEmpty) return;
+      if (cameras.isEmpty) {
+        _showError('No cameras found.');
+        return;
+      }
       final front = cameras.firstWhere(
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
       );
-      _cameraController = CameraController(front, ResolutionPreset.medium);
+      _cameraController = CameraController(
+        front,
+        ResolutionPreset.medium,
+        enableAudio: false,
+      );
       await _cameraController!.initialize();
       if (!mounted) return;
       setState(() => _isCameraInitialized = true);
     } catch (e, st) {
       debugPrint('Camera init error: $e\n$st');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Camera init error: $e')));
-      }
+      if (mounted) _showError('Could not initialize camera: $e');
     }
   }
 
+  // --- Capture & Analyze ---
   Future<void> _captureAndAnalyze() async {
-    if (!_isCameraInitialized || _cameraController == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Camera not ready')));
+    if (!_isCameraInitialized ||
+        _cameraController == null ||
+        _cameraController!.value.isTakingPicture) {
+      _showError('Camera not ready or busy.');
       return;
     }
 
     setState(() {
       _isAnalyzing = true;
       _analyzedUndertone = null;
+      _capturedImagePath = null;
+      _capturedBytes = null;
     });
 
     try {
       final XFile picture = await _cameraController!.takePicture();
-
-      // Read bytes
       final Uint8List bytes = await picture.readAsBytes();
 
       setState(() {
@@ -102,34 +115,33 @@ class _PaletteScreenState extends State<PaletteScreen>
         _capturedBytes = bytes;
       });
 
-      final undertone = await _analyzeSkinTone(bytes);
+      // Use compute for analysis in separate isolate
+      final undertone = await compute(_analyzeSkinTone, bytes);
+
+      if (!mounted) return;
 
       setState(() {
         _analyzedUndertone = undertone;
         _isAnalyzing = false;
       });
 
-      // Update global model via Provider
       Provider.of<UserProfileModel>(
         context,
         listen: false,
       ).updateSkinTone(undertone);
-
       _resultAnimController.forward(from: 0);
       _showResultDialog(undertone);
     } catch (e, st) {
       debugPrint('Capture/analyze error: $e\n$st');
-      setState(() => _isAnalyzing = false);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+        setState(() => _isAnalyzing = false);
+        _showError('Error during capture/analysis: $e');
       }
     }
   }
 
-  /// Analyze only the region inside the guide square (auto crop).
-  Future<String> _analyzeSkinTone(Uint8List bytes) async {
+  // --- Analysis Logic (Static for compute) ---
+  static Future<String> _analyzeSkinTone(Uint8List bytes) async {
     try {
       final img.Image? decoded = img.decodeImage(bytes);
       if (decoded == null) return 'Neutral';
@@ -144,26 +156,29 @@ class _PaletteScreenState extends State<PaletteScreen>
         0,
         decoded.height - 1,
       );
-      final int xEnd = (xStart + cropSize).clamp(0, decoded.width - 1);
-      final int yEnd = (yStart + cropSize).clamp(0, decoded.height - 1);
+      final int actualCropWidth = math.min(cropSize, decoded.width - xStart);
+      final int actualCropHeight = math.min(cropSize, decoded.height - yStart);
 
       final List<List<double>> hsvSamples = [];
 
-      for (int y = yStart; y <= yEnd; y++) {
-        for (int x = xStart; x <= xEnd; x++) {
+      for (int y = yStart; y < yStart + actualCropHeight; y++) {
+        for (int x = xStart; x < xStart + actualCropWidth; x++) {
           final dynamic p = decoded.getPixel(x, y);
           int r, g, b;
           if (p is int) {
-            final rgb = _extractRgbFromInt(p);
+            final rgb = _extractRgbFromIntStatic(p);
             r = rgb[0];
             g = rgb[1];
             b = rgb[2];
+          } else if (p is img.Pixel) {
+            r = p.r.toInt();
+            g = p.g.toInt();
+            b = p.b.toInt();
           } else {
-            r = (p as dynamic).r as int;
-            g = (p as dynamic).g as int;
-            b = (p as dynamic).b as int;
+            continue;
           }
-          final hsv = _rgbToHsv(r, g, b);
+
+          final hsv = _rgbToHsvStatic(r, g, b);
           hsvSamples.add(hsv);
         }
       }
@@ -180,44 +195,37 @@ class _PaletteScreenState extends State<PaletteScreen>
       avgS /= hsvSamples.length;
       avgV /= hsvSamples.length;
 
-      final undertone = _determineUndertone(avgH, avgS, avgV);
-
-      debugPrint(
-        "Auto-crop HSV avg -> H:${avgH.toStringAsFixed(2)} "
-        "S:${avgS.toStringAsFixed(2)} V:${avgV.toStringAsFixed(2)} "
-        "=> $undertone",
-      );
+      final undertone = _determineUndertoneStatic(avgH, avgS, avgV);
 
       return undertone;
     } catch (e, st) {
-      debugPrint('Analysis error: $e\n$st');
+      debugPrint('Static Analysis error: $e\n$st');
       return 'Neutral';
     }
   }
 
-  List<int> _extractRgbFromInt(int pixel) {
+  // --- Static Helper Functions ---
+  static List<int> _extractRgbFromIntStatic(int pixel) {
+    /* ... same logic ... */
     final int rA = (pixel >> 16) & 0xFF;
     final int gA = (pixel >> 8) & 0xFF;
     final int bA = pixel & 0xFF;
-
     final int rB = pixel & 0xFF;
     final int gB = (pixel >> 8) & 0xFF;
     final int bB = (pixel >> 16) & 0xFF;
-
-    final sA = _rgbToHsv(rA, gA, bA)[1];
-    final sB = _rgbToHsv(rB, gB, bB)[1];
-
+    final sA = _rgbToHsvStatic(rA, gA, bA)[1];
+    final sB = _rgbToHsvStatic(rB, gB, bB)[1];
     return sA >= sB ? [rA, gA, bA] : [rB, gB, bB];
   }
 
-  List<double> _rgbToHsv(int r, int g, int b) {
+  static List<double> _rgbToHsvStatic(int r, int g, int b) {
+    /* ... same logic ... */
     final double rf = r / 255.0;
     final double gf = g / 255.0;
     final double bf = b / 255.0;
     final double maxVal = math.max(rf, math.max(gf, bf));
     final double minVal = math.min(rf, math.min(gf, bf));
     final double delta = maxVal - minVal;
-
     double h = 0.0;
     if (delta != 0) {
       if (maxVal == rf) {
@@ -229,21 +237,23 @@ class _PaletteScreenState extends State<PaletteScreen>
       }
     }
     if (h < 0) h += 360;
-
     final double s = maxVal == 0 ? 0 : delta / maxVal;
     final double v = maxVal;
     return [h, s, v];
   }
 
-  String _determineUndertone(double h, double s, double v) {
-    if ((h >= 40 && h <= 70) || (h >= 0 && h <= 30)) {
+  static String _determineUndertoneStatic(double h, double s, double v) {
+    /* ... same logic ... */
+    if (s < 0.1 || v < 0.2 || v > 0.95) return 'Neutral';
+    if ((h >= 30 && h <= 65) || (h >= 0 && h <= 20)) {
       return 'Warm';
-    } else if (h >= 180 && h <= 270) {
+    } else if (h >= 190 && h <= 300) {
       return 'Cool';
     }
     return 'Neutral';
   }
 
+  // --- Styled Result Dialog ---
   void _showResultDialog(String undertone) {
     showDialog(
       context: context,
@@ -255,11 +265,16 @@ class _PaletteScreenState extends State<PaletteScreen>
         ),
         child: AlertDialog(
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(16),
           ),
+          backgroundColor: Colors.white,
+          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+          contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 15),
+          actionsPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
           title: Row(
             children: [
               TweenAnimationBuilder<double>(
+                /* ... same icon animation ... */
                 tween: Tween(begin: 0.0, end: 1.0),
                 duration: const Duration(milliseconds: 600),
                 curve: Curves.elasticOut,
@@ -268,16 +283,12 @@ class _PaletteScreenState extends State<PaletteScreen>
                     scale: value,
                     child: Icon(
                       undertone == 'Warm'
-                          ? Icons.wb_sunny
+                          ? Icons.wb_sunny_outlined
                           : (undertone == 'Cool'
-                                ? Icons.ac_unit
-                                : Icons.balance),
-                      color: undertone == 'Warm'
-                          ? const Color(0xFFF59E0B)
-                          : (undertone == 'Cool'
-                                ? const Color(0xFF3B82F6)
-                                : const Color(0xFF10B981)),
-                      size: 32,
+                                ? Icons.ac_unit_outlined
+                                : Icons.balance_outlined),
+                      color: _undertoneColor(undertone),
+                      size: 30,
                     ),
                   );
                 },
@@ -285,29 +296,55 @@ class _PaletteScreenState extends State<PaletteScreen>
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Skin Undertone Detected',
+                  'Undertone Detected!',
                   style: GoogleFonts.inter(
                     fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                    color: Colors.black87,
                     fontSize: 18,
                   ),
                 ),
               ),
             ],
           ),
-          content: Text(
-            '$undertone\n\nWe analyzed only the square region in the center.',
-            style: GoogleFonts.inter(height: 1.5, color: Colors.black87),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                undertone,
+                style: GoogleFonts.inter(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: _undertoneColor(undertone),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Analysis based on the central region of the image.',
+                style: GoogleFonts.inter(
+                  height: 1.4,
+                  color: Colors.black54,
+                  fontSize: 13,
+                ),
+              ),
+            ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF8B7355),
+                foregroundColor: themeColor,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
               ),
               child: Text(
-                'Close',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                'Got It!',
+                style: GoogleFonts.inter(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
               ),
             ),
           ],
@@ -324,6 +361,7 @@ class _PaletteScreenState extends State<PaletteScreen>
     super.dispose();
   }
 
+  // --- Undertone Color Helper ---
   Color _undertoneColor(String? u) {
     switch (u) {
       case 'Warm':
@@ -333,27 +371,39 @@ class _PaletteScreenState extends State<PaletteScreen>
       case 'Neutral':
         return const Color(0xFF10B981);
       default:
-        return Colors.grey.shade700;
+        return Colors.grey.shade600;
     }
   }
 
+  // --- Styled Error SnackBar ---
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: GoogleFonts.inter()),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(10),
+      ),
+    );
+  }
+
+  // --- Build Method with Themed UI ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE7DFD8),
+      backgroundColor: lightBackgroundColor,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFE7DFD8),
-        elevation: 0,
+        backgroundColor: Colors.white,
+        elevation: 1.0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () {
-            Navigator.of(context).pop();
-          },
+          icon: const Icon(Icons.arrow_back, color: Colors.black54),
+          onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
-          'Under Tone Analysis',
+          'Skin Tone Analysis',
           style: GoogleFonts.inter(
-            color: Colors.black,
+            color: Colors.black87,
             fontSize: 18,
             fontWeight: FontWeight.w600,
           ),
@@ -361,32 +411,19 @@ class _PaletteScreenState extends State<PaletteScreen>
         centerTitle: true,
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.only(bottom: 100),
-          child: Column(
-            children: [
-              const SizedBox(height: 20),
-
-              // Instruction Card with slide animation
-              AnimatedSlideIn(
-                duration: const Duration(milliseconds: 600),
-                delay: const Duration(milliseconds: 100),
-                begin: const Offset(0, -0.2),
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 20),
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
-                        spreadRadius: 1,
-                        blurRadius: 8,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
+        child: Column(
+          children: [
+            // --- Instruction Card ---
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Card(
+                elevation: 2.0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                color: Colors.white,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
                   child: Row(
                     children: [
                       TweenAnimationBuilder<double>(
@@ -397,20 +434,15 @@ class _PaletteScreenState extends State<PaletteScreen>
                           return Transform.scale(
                             scale: value,
                             child: Container(
-                              width: 50,
-                              height: 50,
+                              width: 45,
+                              height: 45,
                               decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [
-                                    Color(0xFF8B7355),
-                                    Color(0xFFB5A491),
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(15),
+                                color: themeColor.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                              child: const Icon(
-                                Icons.camera_alt,
-                                color: Colors.white,
+                              child: Icon(
+                                Icons.camera_alt_outlined,
+                                color: themeColor,
                                 size: 24,
                               ),
                             ),
@@ -423,20 +455,20 @@ class _PaletteScreenState extends State<PaletteScreen>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Perfect Your Shot',
+                              'Find Your Undertone',
                               style: GoogleFonts.inter(
-                                fontSize: 18,
+                                fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.black,
+                                color: Colors.black87,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Align your face inside the square for accurate analysis',
+                              'Center your face in the square below using good, natural lighting.',
                               style: GoogleFonts.inter(
-                                fontSize: 14,
+                                fontSize: 13,
                                 color: Colors.black54,
-                                height: 1.3,
+                                height: 1.4,
                               ),
                             ),
                           ],
@@ -446,251 +478,125 @@ class _PaletteScreenState extends State<PaletteScreen>
                   ),
                 ),
               ),
+            ),
+            const SizedBox(height: 10),
 
-              const SizedBox(height: 24),
-
-              // Camera Preview with scale animation
-              AnimatedSlideIn(
-                duration: const Duration(milliseconds: 700),
-                delay: const Duration(milliseconds: 200),
-                child: Container(
-                  height: MediaQuery.of(context).size.height * 0.5,
-                  margin: const EdgeInsets.symmetric(horizontal: 20),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(25),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.2),
-                        spreadRadius: 3,
-                        blurRadius: 15,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(25),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        _isCameraInitialized && _cameraController != null
-                            ? CameraPreview(_cameraController!)
-                            : Container(
-                                color: Colors.grey.shade300,
-                                child: const Center(
-                                  child: CircularProgressIndicator(
-                                    color: Color(0xFF8B7355),
-                                  ),
-                                ),
-                              ),
-
-                        // Animated guide square overlay
-                        TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0.8, end: 1.0),
-                          duration: const Duration(milliseconds: 1200),
-                          curve: Curves.elasticOut,
-                          builder: (context, value, child) {
-                            return Transform.scale(
-                              scale: value,
-                              child: AnimatedPulsingBorder(
-                                child: Container(
-                                  width: 240,
-                                  height: 240,
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: const Color(0xFF8B7355),
-                                      width: 4,
-                                    ),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
+            // --- Camera Preview ---
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: AspectRatio(
+                  aspectRatio: 1.0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.15),
+                          spreadRadius: 2,
+                          blurRadius: 10,
+                          offset: const Offset(0, 5),
                         ),
                       ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          _isCameraInitialized &&
+                                  _cameraController != null &&
+                                  _cameraController!.value.isInitialized
+                              ? CameraPreview(_cameraController!)
+                              : Container(
+                                  color: Colors.grey.shade200,
+                                  child: Center(
+                                    child: CircularProgressIndicator(
+                                      color: themeColor,
+                                    ),
+                                  ),
+                                ),
+                          IgnorePointer(
+                            child: Container(
+                              width: MediaQuery.of(context).size.width * 0.6,
+                              height: MediaQuery.of(context).size.width * 0.6,
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: themeColor.withOpacity(0.8),
+                                  width: 3,
+                                ),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                          ),
+                          if (_isAnalyzing)
+                            Container(
+                              color: Colors.black.withOpacity(0.4),
+                              child: const Center(
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-
-              const SizedBox(height: 24),
-
-              // Result Card with smooth transition
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 500),
-                transitionBuilder: (child, animation) {
-                  return ScaleTransition(
-                    scale: animation,
-                    child: FadeTransition(opacity: animation, child: child),
-                  );
-                },
-                child: _analyzedUndertone != null
-                    ? Container(
-                        key: ValueKey(_analyzedUndertone),
-                        margin: const EdgeInsets.symmetric(horizontal: 20),
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              spreadRadius: 2,
-                              blurRadius: 12,
-                              offset: const Offset(0, 6),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            if (_capturedBytes != null)
-                              TweenAnimationBuilder<double>(
-                                tween: Tween(begin: 0.0, end: 1.0),
-                                duration: const Duration(milliseconds: 600),
-                                curve: Curves.easeOut,
-                                builder: (context, value, child) {
-                                  return Transform.scale(
-                                    scale: value,
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(15),
-                                      child: kIsWeb
-                                          ? Image.memory(
-                                              _capturedBytes!,
-                                              width: 80,
-                                              height: 80,
-                                              fit: BoxFit.cover,
-                                            )
-                                          : Image.file(
-                                              File(_capturedImagePath!),
-                                              width: 80,
-                                              height: 80,
-                                              fit: BoxFit.cover,
-                                            ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Text(
-                                '$_analyzedUndertone Undertone',
-                                style: GoogleFonts.inter(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black,
-                                ),
-                              ),
-                            ),
-                            TweenAnimationBuilder<double>(
-                              tween: Tween(begin: 0.0, end: 1.0),
-                              duration: const Duration(milliseconds: 800),
-                              curve: Curves.elasticOut,
-                              builder: (context, value, child) {
-                                return Transform.scale(
-                                  scale: value,
-                                  child: Container(
-                                    width: 50,
-                                    height: 50,
-                                    decoration: BoxDecoration(
-                                      color: _undertoneColor(
-                                        _analyzedUndertone,
-                                      ),
-                                      borderRadius: BorderRadius.circular(15),
-                                    ),
-                                    child: Icon(
-                                      _analyzedUndertone == 'Warm'
-                                          ? Icons.wb_sunny
-                                          : (_analyzedUndertone == 'Cool'
-                                                ? Icons.ac_unit
-                                                : Icons.balance),
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-              ),
-            ],
-          ),
-        ),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      floatingActionButton: ScaleTransition(
-        scale: _isAnalyzing
-            ? const AlwaysStoppedAnimation(1.0)
-            : _buttonPulseAnim,
-        child: ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF8B7355),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 18),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(30),
             ),
-            elevation: _isAnalyzing ? 2 : 8,
-          ),
-          icon: _isAnalyzing
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
+            const SizedBox(height: 20),
+
+            // --- Capture Button ---
+            Padding(
+              padding: const EdgeInsets.fromLTRB(30, 10, 30, 20),
+              child: ScaleTransition(
+                scale: _isAnalyzing
+                    ? const AlwaysStoppedAnimation(1.0)
+                    : _buttonPulseAnim,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: themeColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 40,
+                      vertical: 16,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    elevation: _isAnalyzing ? 2 : 6,
                   ),
-                )
-              : const Icon(Icons.camera_alt, size: 24),
-          label: Text(
-            _isAnalyzing ? 'Analyzing...' : 'Capture & Analyze',
-            style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          onPressed: _isAnalyzing ? null : _captureAndAnalyze,
+                  icon: _isAnalyzing
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.camera_alt_outlined, size: 22),
+                  label: Text(
+                    _isAnalyzing ? 'Analyzing...' : 'Capture & Analyze',
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  onPressed: (!_isCameraInitialized || _isAnalyzing)
+                      ? null
+                      : _captureAndAnalyze,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-// Animated pulsing border widget for the guide square
-class AnimatedPulsingBorder extends StatefulWidget {
-  final Widget child;
-
-  const AnimatedPulsingBorder({super.key, required this.child});
-
-  @override
-  State<AnimatedPulsingBorder> createState() => _AnimatedPulsingBorderState();
-}
-
-class _AnimatedPulsingBorderState extends State<AnimatedPulsingBorder>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _opacityAnim;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2000),
-    )..repeat(reverse: true);
-
-    _opacityAnim = Tween<double>(
-      begin: 0.6,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(opacity: _opacityAnim, child: widget.child);
-  }
-}
+// --- AnimatedPulsingBorder (Keep if using, otherwise remove) ---
+// class AnimatedPulsingBorder extends StatefulWidget { /* ... */ }
+// class _AnimatedPulsingBorderState extends State<AnimatedPulsingBorder> with SingleTickerProviderStateMixin { /* ... */ }

@@ -1,12 +1,9 @@
-// forma-backend/routes/recommendationRoutes.js
 import express from 'express';
-import ClothingItem from '../models/clothingItemModel.js'; // Make sure this path is correct
-import { getRecommendationNames } from '../utils/recommendationLogic.js'; // We will create this file
+import ClothingItem from '../models/clothingItemModel.js';
+import { getRecommendationNames } from '../utils/recommendationLogic.js';
 
 const router = express.Router();
 
-// @desc   Get clothing recommendations based on user profile
-// @route  GET /api/recommendations
 router.get('/', async (req, res) => {
   try {
     const { gender, bodyType, skinUndertone } = req.query;
@@ -15,14 +12,17 @@ router.get('/', async (req, res) => {
       return res.status(400).json({ message: 'Missing profile information' });
     }
     
-    // 1. Get the list of recommended clothing NAMES from the logic file
+    // 1. Get the list of recommended clothing names from your logic file
     const recommendationMap = getRecommendationNames(gender, skinUndertone);
-    
-    // 2. Fetch all clothing items from the database that match those names
-    const allNames = Object.values(recommendationMap).flat(); // Get all names in a single array
-    const clothingItemsFromDB = await ClothingItem.find({ name: { $in: allNames } });
+    const allNames = Object.values(recommendationMap).flat();
 
-    // 3. Group the fetched items by category
+    // 2. Create a case-insensitive search query
+    const nameRegexes = allNames.map(name => new RegExp(`^${name.trim()}$`, "i"));
+
+    // 3. Find all items in the database that match the names
+    const clothingItemsFromDB = await ClothingItem.find({ name: { $in: nameRegexes } });
+
+    // 4. Group the found items by their category
     const finalRecommendations = {};
     for (const item of clothingItemsFromDB) {
       if (!finalRecommendations[item.category]) {
@@ -31,6 +31,7 @@ router.get('/', async (req, res) => {
       finalRecommendations[item.category].push(item);
     }
 
+    // 5. Send the final grouped data back to the app
     res.json(finalRecommendations);
 
   } catch (error) {

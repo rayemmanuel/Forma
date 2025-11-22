@@ -4,7 +4,77 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService {
   // Change this to your actual backend URL
-  static const String baseUrl = 'http://192.168.1.188:3000/api';
+  static const String baseUrl = 'http://192.168.55.101:3000/api';
+
+  static Future<Map<String, dynamic>> requestReset({
+    required String email,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/request-reset'), // New backend endpoint
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'email': email}),
+      );
+      // Backend just needs to check if email exists for this demo
+      // In a real app, it would generate a token and maybe send an email
+      return json.decode(
+        response.body,
+      ); // Expect {'success': true/false, 'message': '...'}
+    } catch (e) {
+      return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
+
+  // --- NEW: Reset Password (Insecure Demo Version) ---
+  static Future<Map<String, dynamic>> resetPassword({
+    required String email,
+    required String newPassword,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/auth/reset-password'), // New backend endpoint
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'email': email,
+          'newPassword': newPassword,
+          // No token needed for this insecure demo version
+        }),
+      );
+      return json.decode(
+        response.body,
+      ); // Expect {'success': true/false, 'message': '...'}
+    } catch (e) {
+      return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
+
+  // In lib/services/auth_service.dart
+  static Future<Map<String, dynamic>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final token = await getToken();
+    if (token == null) return {'success': false, 'message': 'Not logged in'};
+
+    try {
+      final response = await http.post(
+        // Or http.put
+        Uri.parse('$baseUrl/user/change-password'), // Define this route
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: json.encode({
+          'currentPassword': currentPassword,
+          'newPassword': newPassword,
+        }),
+      );
+      final data = json.decode(response.body);
+      return data; // Assuming backend returns {'success': true/false, 'message': '...'}
+    } catch (e) {
+      return {'success': false, 'message': 'Network error: $e'};
+    }
+  }
 
   // Sign Up
   static Future<Map<String, dynamic>> signUp({
